@@ -1,3 +1,6 @@
+> [!CAUTION]
+> This is completely vibe-coded. There is no human code in this project. Use at your own risk.
+> 
 # Markdown Compose Preview for Thunderbird
 
 [![CI](https://github.com/sahiljhawar/thunderbird-markdown-preview/actions/workflows/ci.yml/badge.svg)](https://github.com/sahiljhawar/thunderbird-markdown-preview/actions/workflows/ci.yml)
