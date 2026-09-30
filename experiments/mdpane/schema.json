@@ -1,0 +1,85 @@
+[
+  {
+    "namespace": "mdpane",
+    "description": "Adds a live preview pane next to the editor of a compose window.",
+    "functions": [
+      {
+        "name": "attachPane",
+        "type": "function",
+        "async": true,
+        "description": "Builds the preview pane in the compose window. Resolves to false when the window layout is not recognised.",
+        "parameters": [
+          { "name": "windowId", "type": "integer" },
+          {
+            "name": "options",
+            "type": "object",
+            "properties": {
+              "css": { "type": "string", "description": "Stylesheet for the preview document." },
+              "width": { "type": "integer", "optional": true, "description": "Initial pane width in CSS pixels." },
+              "visible": { "type": "boolean", "optional": true }
+            }
+          }
+        ]
+      },
+      {
+        "name": "setPreview",
+        "type": "function",
+        "async": true,
+        "description": "Replaces the rendered HTML shown in the pane.",
+        "parameters": [
+          { "name": "windowId", "type": "integer" },
+          { "name": "html", "type": "string" }
+        ]
+      },
+      {
+        "name": "setStatus",
+        "type": "function",
+        "async": true,
+        "description": "Shows a one-line notice above the preview. An empty text hides it.",
+        "parameters": [
+          { "name": "windowId", "type": "integer" },
+          { "name": "text", "type": "string" },
+          { "name": "kind", "type": "string", "enum": ["info", "warning"], "optional": true }
+        ]
+      },
+      {
+        "name": "setVisible",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "windowId", "type": "integer" },
+          { "name": "visible", "type": "boolean" }
+        ]
+      },
+      {
+        "name": "htmlToText",
+        "type": "function",
+        "async": true,
+        "description": "Converts an HTML fragment to plain text the way Thunderbird does for a plain-text body, without wrapping lines.",
+        "parameters": [{ "name": "html", "type": "string" }]
+      },
+      {
+        "name": "detachPane",
+        "type": "function",
+        "async": true,
+        "parameters": [{ "name": "windowId", "type": "integer" }]
+      }
+    ],
+    "events": [
+      {
+        "name": "onEditorInput",
+        "type": "function",
+        "description": "Fired when the message body of a compose window changes, and when its editor document is replaced.",
+        "parameters": [{ "name": "windowId", "type": "integer" }]
+      },
+      {
+        "name": "onPaneResized",
+        "type": "function",
+        "parameters": [
+          { "name": "windowId", "type": "integer" },
+          { "name": "width", "type": "integer" }
+        ]
+      }
+    ]
+  }
+]

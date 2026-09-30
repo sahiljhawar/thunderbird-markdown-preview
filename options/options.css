@@ -1,0 +1,7 @@
+:root { color-scheme: light dark; }
+body { font: message-box; padding: 12px 16px; max-width: 34em; }
+.row { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 14px; }
+.row small { display: block; opacity: .7; margin-top: 2px; }
+.field { display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; gap: 12px; }
+.field input { width: 7em; }
+.note { opacity: .7; margin-top: 18px; }

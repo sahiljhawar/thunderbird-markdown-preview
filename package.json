@@ -1,0 +1,38 @@
+{
+  "name": "thunderbird-markdown-preview",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live GitHub-style Markdown preview pane and send-as-HTML for Thunderbird compose",
+  "scripts": {
+    "vendor": "bash scripts/vendor.sh",
+    "test": "node --test \"tests/*.test.js\"",
+    "lint": "node --check background.js && node --check experiments/mdpane/parent.js && node --check options/options.js",
+    "package": "bash scripts/package.sh",
+    "e2e": "node tests/e2e/run.mjs",
+    "check-dom": "bash scripts/check-compose-dom.sh"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "github-markdown-css": "^5.9.0",
+    "highlight.js": "^11.12.0",
+    "jsdom": "^29.1.1",
+    "markdown-it": "^15.0.2",
+    "markdown-it-emoji": "^3.1.0",
+    "markdown-it-footnote": "^4.0.0",
+    "markdown-it-task-lists": "^2.1.1",
+    "web-ext": "^10.7.0"
+  },
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sahiljhawar/thunderbird-markdown-preview.git"
+  },
+  "homepage": "https://github.com/sahiljhawar/thunderbird-markdown-preview#readme",
+  "bugs": {
+    "url": "https://github.com/sahiljhawar/thunderbird-markdown-preview/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

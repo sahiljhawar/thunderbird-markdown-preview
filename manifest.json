@@ -1,0 +1,54 @@
+{
+  "manifest_version": 2,
+  "name": "Markdown Compose Preview",
+  "short_name": "MD Preview",
+  "version": "1.0.0",
+  "description": "Write Markdown in the compose window, see a live GitHub-style preview in a right-hand pane, and send the rendered HTML.",
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "markdown-compose-preview@jhawar.local",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "compose",
+    "storage",
+    "notifications"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "type": "module",
+    "persistent": true
+  },
+  "compose_action": {
+    "default_title": "Markdown preview",
+    "default_icon": "icons/icon.svg"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": false
+  },
+  "experiment_apis": {
+    "mdpane": {
+      "schema": "experiments/mdpane/schema.json",
+      "parent": {
+        "scopes": [
+          "addon_parent"
+        ],
+        "paths": [
+          [
+            "mdpane"
+          ]
+        ],
+        "script": "experiments/mdpane/parent.js"
+      }
+    }
+  },
+  "homepage_url": "https://github.com/sahiljhawar/thunderbird-markdown-preview"
+}

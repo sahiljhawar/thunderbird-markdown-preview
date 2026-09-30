@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Markdown Compose Preview</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <form id="form">
+    <label class="row">
+      <input type="checkbox" id="enabledByDefault">
+      <span>Render Markdown in new messages
+        <small>Also follows the MD button: the last choice you made is remembered.</small></span>
+    </label>
+    <label class="row">
+      <input type="checkbox" id="breaks">
+      <span>Treat single line breaks as line breaks
+        <small>Matches GitHub comments. Turn off for strict CommonMark paragraphs.</small></span>
+    </label>
+    <label class="field">
+      <span>Preview delay (ms)</span>
+      <input type="number" id="debounceMs" min="0" max="2000" step="50">
+    </label>
+    <label class="field">
+      <span>Pane width (px)</span>
+      <input type="number" id="paneWidth" min="220" max="2000" step="10">
+    </label>
+    <p class="note">Rendering happens locally. Nothing you write is sent anywhere.</p>
+  </form>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

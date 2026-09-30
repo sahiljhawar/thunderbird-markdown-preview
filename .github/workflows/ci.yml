@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Lint, unit tests, package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint (syntax check)
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Vendored files are up to date
+        run: |
+          npm run vendor
+          git diff --exit-code -- vendor preview
+
+      - name: Package
+        run: npm run package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: markdown-compose-preview-xpi
+          path: dist/*.xpi
+          if-no-files-found: error
+
+  e2e:
+    name: End to end (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Thunderbird release
+            url: https://download.mozilla.org/?product=thunderbird-latest&os=linux64&lang=en-US
+          - name: Thunderbird ESR
+            url: https://download.mozilla.org/?product=thunderbird-esr-latest&os=linux64&lang=en-US
+          - name: Thunderbird ESR 128
+            url: https://archive.mozilla.org/pub/thunderbird/releases/128.14.0esr/linux-x86_64/en-US/thunderbird-128.14.0esr.tar.bz2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libdbus-glib-1-2 libasound2t64
+
+      - name: Download Thunderbird
+        run: |
+          mkdir -p "$RUNNER_TEMP/tb"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/tb/tb.archive" "${{ matrix.url }}"
+          tar -xf "$RUNNER_TEMP/tb/tb.archive" -C "$RUNNER_TEMP/tb"
+          echo "THUNDERBIRD=$RUNNER_TEMP/tb/thunderbird/thunderbird" >> "$GITHUB_ENV"
+          grep -m1 '^Version=' "$RUNNER_TEMP/tb/thunderbird/application.ini"
+
+      - name: Compose window hooks are still there
+        run: bash scripts/check-compose-dom.sh "$RUNNER_TEMP/tb/thunderbird"
+
+      - name: End to end tests
+        run: xvfb-run -a npm run e2e
