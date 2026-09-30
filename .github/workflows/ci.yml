@@ -12,11 +12,11 @@ permissions:
 jobs:
   build:
     name: Lint, unit tests, package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -37,7 +37,7 @@ jobs:
       - name: Package
         run: npm run package
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: markdown-compose-preview-xpi
           path: dist/*.xpi
@@ -45,7 +45,7 @@ jobs:
 
   e2e:
     name: End to end (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
     strategy:
       fail-fast: false
@@ -58,9 +58,9 @@ jobs:
           - name: Thunderbird ESR 128
             url: https://archive.mozilla.org/pub/thunderbird/releases/128.14.0esr/linux-x86_64/en-US/thunderbird-128.14.0esr.tar.bz2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
