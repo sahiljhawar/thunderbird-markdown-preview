@@ -13,7 +13,7 @@ version="$(grep -m1 '^Version=' "$dir/application.ini" 2>/dev/null | cut -d= -f2
 xhtml="$(unzip -p "$omni" chrome/messenger/content/messenger/messengercompose/messengercompose.xhtml)"
 
 status=0
-for id in messageArea messageEditor FindToolbar; do
+for id in messageArea messageEditor FindToolbar composeToolbar2; do
   if grep -q "id=\"$id\"" <<<"$xhtml"; then
     echo "ok       #$id"
   else

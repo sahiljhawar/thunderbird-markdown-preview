@@ -16,7 +16,8 @@
             "properties": {
               "css": { "type": "string", "description": "Stylesheet for the preview document." },
               "width": { "type": "integer", "optional": true, "description": "Initial pane width in CSS pixels." },
-              "visible": { "type": "boolean", "optional": true }
+              "render": { "type": "boolean", "optional": true, "description": "Markdown is rendered when the message is sent." },
+              "preview": { "type": "boolean", "optional": true, "description": "The preview pane is expanded (otherwise collapsed to a tab)." }
             }
           }
         ]
@@ -43,12 +44,20 @@
         ]
       },
       {
-        "name": "setVisible",
+        "name": "setState",
         "type": "function",
         "async": true,
+        "description": "Updates the render toggle label and expands or collapses the preview pane.",
         "parameters": [
           { "name": "windowId", "type": "integer" },
-          { "name": "visible", "type": "boolean" }
+          {
+            "name": "state",
+            "type": "object",
+            "properties": {
+              "render": { "type": "boolean", "optional": true },
+              "preview": { "type": "boolean", "optional": true }
+            }
+          }
         ]
       },
       {
@@ -71,6 +80,15 @@
         "type": "function",
         "description": "Fired when the message body of a compose window changes, and when its editor document is replaced.",
         "parameters": [{ "name": "windowId", "type": "integer" }]
+      },
+      {
+        "name": "onUserAction",
+        "type": "function",
+        "description": "The user clicked a control in the pane: toggle-render, toggle-preview, hide-preview or show-preview.",
+        "parameters": [
+          { "name": "windowId", "type": "integer" },
+          { "name": "action", "type": "string" }
+        ]
       },
       {
         "name": "onPaneResized",

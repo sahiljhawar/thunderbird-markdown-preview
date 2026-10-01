@@ -17,9 +17,11 @@ the right, and send the rendered result as a normal HTML email.
   no network access.
 * On Send, the GitHub styling is inlined into the HTML, so the message looks the same in Gmail,
   Outlook and other clients. Thunderbird adds the plain-text alternative as usual.
-* Your signature is left alone: it is kept as the HTML Thunderbird inserted (bold, links and
-  images intact) and never goes through Markdown.
-* An **MD** button in the compose toolbar turns rendering on or off per message.
+* Only what you type goes through Markdown. Your signature, the "On ... wrote:" line and the
+  quoted message in a reply or forward are kept exactly as the HTML they already are (bold,
+  links and images intact), so a reply never alters the thread you are answering.
+* A **Markdown** button in the compose toolbar turns rendering on or off for the message you are
+  writing. The preview pane can be hidden separately.
 
 ## Install
 
@@ -51,15 +53,31 @@ Notes on installing:
 
 ## Using it
 
-1. Write a **new message** (or reply) in HTML format, which is Thunderbird's default, and type
+1. Write a **new message** or a reply in HTML format, which is Thunderbird's default, and type
    Markdown. The pane appears on the right about half a second after the window opens. Drag the
    divider to resize it.
-2. Press **Send**. The body becomes rendered HTML.
-3. Click **MD** in the compose toolbar to switch rendering off for that message. The last choice
-   is remembered for new messages. With it off, the message is sent exactly as you wrote it.
+2. Press **Send**. What you typed becomes rendered HTML.
 
-Options (Add-ons and Themes, then the add-on's **Options**): default on or off, single line
-breaks as line breaks (GitHub comment style, on by default), preview delay and pane width.
+There are two independent toggles, side by side in the compose toolbar:
+
+* **Markdown: on/off** turns rendering on or off. Its badge shows `ON` or `OFF`. With rendering
+  off, the message is sent exactly as you wrote it.
+* **Preview: on/off** shows or hides the pane on the right. When hidden it collapses to a narrow
+  **Markdown preview** tab on the right edge, and clicking that tab brings it back.
+
+What the pane shows depends on both:
+
+| Preview | Markdown | Pane shows |
+| --- | --- | --- |
+| on | on | the rendered Markdown, live |
+| on | off | the message as usual, as written (the Markdown source), with a note |
+| off | either | nothing; the editor has the full width |
+
+The pane header has the same two switches (**Render on send** and **Hide**) for convenience.
+
+Both toggles are remembered for new messages. Options (Add-ons and Themes, then the add-on's
+**Options**): the two defaults, single line breaks as line breaks (GitHub comment style, on by
+default), preview delay and pane width.
 
 ### Things to know
 
@@ -73,22 +91,26 @@ breaks as line breaks (GitHub comment style, on by default), preview delay and p
   use a text label instead of GitHub's icon, and footnote back-links are dropped, since mail
   clients strip anchors and SVG.
 * **Raw HTML in the source is escaped**, not rendered.
-* A trailing `-- ` signature block is kept out of Markdown, so it never turns the line above it
-  into a heading. Reply quotes (`> `) render as blockquotes.
+* **Replies and forwards.** The quoted message is not re-rendered: it stays as the sender's
+  HTML, in the sent message and in the preview. If you answer inline (your text between two
+  parts of the quote), your text is still rendered and the quote parts are left alone. Remote
+  images in quoted mail are not loaded in the preview, the same way Thunderbird's editor does
+  not load them.
 
 ## How it works
 
 Thunderbird has no API for adding UI to the compose window, so the add-on has two parts:
 
 * **A small Experiment** (`experiments/mdpane/`) builds the preview pane next to the editor and
-  reports edits. It depends on two element ids in the compose window (`#messageArea` and
-  `#messageEditor`) and removes everything it added when the add-on is disabled. The preview is
+  reports edits. It depends on a few element ids in the compose window (`#messageArea`,
+  `#messageEditor` and the toolbar `#composeToolbar2`, where it adds the Preview button) and removes everything it added when the add-on is disabled. The preview is
   a sandboxed iframe with a strict content security policy, and links in it are inert.
 * **Everything else** (`background.js`, `lib/`) uses stable public WebExtension APIs:
   `compose.getComposeDetails`, `compose.onBeforeSend`, `composeAction`, `windows` and `storage`.
   Rendering is markdown-it configured like GitHub, plus GitHub's own CSS. `lib/inline.js` turns
-  the result into email-safe HTML by inlining styles, and `lib/signature.js` keeps the signature
-  out of the Markdown pass.
+  the result into email-safe HTML by inlining styles, and `lib/protected.js` keeps your
+  signature, the cite line, the quoted message and forwarded messages out of the Markdown pass:
+  they are swapped for placeholders before the text is extracted and restored afterwards.
 
 The pane's layout is applied only after the editor content has stopped changing. Resizing the
 editor while Thunderbird is still filling in a new message (body, signature, quoted text) made
@@ -111,7 +133,7 @@ which verifies the element ids the Experiment depends on in that build.
 
 ```
 npm ci
-npm test          # unit tests: renderer, email inliner, signature handling
+npm test          # unit tests: renderer, email inliner, signature and quote handling
 npm run e2e       # drives a real headless Thunderbird with a throwaway profile
 npm run vendor    # rebuild vendor/markdown.js and preview/github-markdown.css
 npm run package   # dist/markdown-compose-preview-<version>.xpi
@@ -119,9 +141,10 @@ npm run package   # dist/markdown-compose-preview-<version>.xpi
 
 `npm run e2e` uses the `thunderbird` command. Set `THUNDERBIRD=/path/to/thunderbird` to test
 another build, and `E2E_SHOT=file.png` to save a screenshot of the compose window. It opens
-compose windows, types Markdown, checks the preview, toggles the pane, sends to the local
-Outbox and inspects the stored message, and opens several windows with a signature to guard
-against the signature regression above.
+compose windows, types Markdown, checks the preview, uses both controls, sends to the local
+Outbox and inspects the stored message, replies to a message in a test Inbox to check the quote
+is left alone, and opens several windows with a signature to guard against the signature
+regression above.
 
 The extension itself has no build step: the bundled renderer in `vendor/` is committed, and CI
 checks that it matches `npm run vendor`.

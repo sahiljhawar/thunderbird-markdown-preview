@@ -2,16 +2,17 @@
 import { createRenderer, renderMessage } from "./lib/render.js";
 import { inlineStyles } from "./lib/inline.js";
 import { previewCss } from "./lib/theme.js";
-import { liftSignatures, isolateMarks, restoreSignatures } from "./lib/signature.js";
+import { liftProtected, isolateMarks, restoreBlocks, neutralizeForPreview } from "./lib/protected.js";
 import { DEFAULTS, getSettings, setSettings } from "./lib/settings.js";
 
 const PLAIN_TEXT_NOTICE =
   "Plain-text message: Markdown cannot be sent rendered. Start a new message with Shift+Write " +
-  "(or Shift+Reply) to compose in HTML, or turn Markdown off with the MD button.";
+  "(or Shift+Reply) to compose in HTML, or turn Markdown off with the toolbar button.";
+const RENDER_OFF_NOTICE = "Markdown rendering is off: the message is shown, and will be sent, as written.";
 const ATTACH_RETRIES = 8;
 const ATTACH_RETRY_MS = 250;
 
-/** windowId -> { tabId, enabled, timer } */
+/** windowId -> { tabId, render (Markdown rendered on send), preview (pane expanded), timer } */
 const composeWindows = new Map();
 
 let settings = { ...DEFAULTS };
@@ -37,43 +38,70 @@ browser.storage.onChanged.addListener(async (_changes, area) => {
   for (const windowId of composeWindows.keys()) schedulePreview(windowId, 0);
 });
 
+/** The toolbar button toggles Markdown rendering. Its badge and label show the state. */
 function setToggleAppearance(entry) {
-  const { tabId, enabled } = entry;
-  browser.composeAction.setBadgeText({ tabId, text: enabled ? "MD" : "" });
+  const { tabId, render: on } = entry;
+  browser.composeAction.setBadgeText({ tabId, text: on ? "ON" : "OFF" });
+  browser.composeAction.setBadgeBackgroundColor({ tabId, color: on ? "#1a7f37" : "#6e7781" });
   browser.composeAction.setTitle({
     tabId,
-    title: enabled ? "Markdown preview: on (click to turn off)" : "Markdown preview: off (click to turn on)",
+    title: on ? "Markdown: on" : "Markdown: off",
   });
 }
 
+/** Pushes the window's state to the pane and the toolbar button, and refreshes the preview. */
+async function applyState(windowId) {
+  const entry = composeWindows.get(windowId);
+  if (!entry) return;
+  setToggleAppearance(entry);
+  await browser.mdpane.setState(windowId, { render: entry.render, preview: entry.preview });
+  if (entry.preview) schedulePreview(windowId, 0);
+}
+
 /**
- * Renders the compose body. The signature is kept as the HTML Thunderbird inserted
- * (bold, links and images intact) and never goes through Markdown.
- * `finish` post-processes the rendered Markdown before the signature is put back
- * (the send path inlines styles there).
+ * Renders the compose body. Only what you typed goes through Markdown. Everything else
+ * stays as the HTML it already is: your signature, the "On ... wrote:" line, the quoted
+ * message of a reply and the forwarded message of a forward (see lib/protected.js).
+ *
+ * `finish` post-processes the rendered Markdown before those blocks are put back (the
+ * send path inlines styles there). With `forPreview`, remote images in the blocks are
+ * not loaded.
  */
-async function renderCompose(details, finish = (html) => html) {
+async function renderCompose(details, { finish = (html) => html, forPreview = false } = {}) {
   if (!details.isPlainText && details.body) {
-    const { html, signatures } = liftSignatures(details.body);
-    if (signatures.length) {
+    const { html, blocks } = liftProtected(details.body);
+    if (blocks.length) {
       try {
         const text = await browser.mdpane.htmlToText(html);
-        return restoreSignatures(finish(render(isolateMarks(text))), signatures);
+        const shown = forPreview ? blocks.map((block) => neutralizeForPreview(block)) : blocks;
+        return restoreBlocks(finish(render(isolateMarks(text))), shown);
       } catch (e) {
-        console.warn("Signature-aware conversion failed, using plain text body", e);
+        console.warn("Block-aware conversion failed, using plain text body", e);
       }
     }
   }
   return finish(renderMessage(render, details.plainTextBody));
 }
 
+/** The message as the editor has it (Markdown source untouched), made safe for the preview. */
+function messageAsWritten(details) {
+  const doc = new DOMParser().parseFromString(details.body ?? "", "text/html");
+  return neutralizeForPreview(doc.body.innerHTML);
+}
+
 async function updatePreview(windowId) {
   const entry = composeWindows.get(windowId);
-  if (!entry?.enabled) return;
+  if (!entry?.preview) return; // collapsed: nothing to show, nothing to compute
+  const renderAtStart = entry.render;
   try {
     const details = await browser.compose.getComposeDetails(entry.tabId);
-    await browser.mdpane.setStatus(windowId, details.isPlainText ? PLAIN_TEXT_NOTICE : "", "warning");
-    await browser.mdpane.setPreview(windowId, await renderCompose(details));
+    // Rendering on: the Markdown, rendered. Off: the message as usual, as written.
+    const html = renderAtStart ? await renderCompose(details, { forPreview: true }) : messageAsWritten(details);
+    // The switches may have been flipped while this update was in flight: do not paint stale content.
+    if (entry.render !== renderAtStart || !entry.preview || !composeWindows.has(windowId)) return;
+    if (!renderAtStart) await browser.mdpane.setStatus(windowId, RENDER_OFF_NOTICE, "info");
+    else await browser.mdpane.setStatus(windowId, details.isPlainText ? PLAIN_TEXT_NOTICE : "", "warning");
+    await browser.mdpane.setPreview(windowId, html);
   } catch (e) {
     console.error("Markdown preview update failed", e);
     browser.mdpane.setStatus(windowId, `Preview failed: ${e.message ?? e}`, "warning").catch(() => {});
@@ -91,7 +119,8 @@ async function attach(entry, windowId, attempt = 0) {
   const ok = await browser.mdpane.attachPane(windowId, {
     css: await loadPreviewStyles(),
     width: settings.paneWidth,
-    visible: entry.enabled,
+    render: entry.render,
+    preview: entry.preview,
   });
   if (ok) return; // the Experiment sends the first onEditorInput once the editor has settled
   // The compose window may still be loading its layout.
@@ -106,7 +135,12 @@ async function setupWindow(windowId) {
   if (composeWindows.has(windowId)) return;
   const [tab] = await browser.tabs.query({ windowId });
   if (!tab) return;
-  const entry = { tabId: tab.id, enabled: settings.enabledByDefault, timer: null };
+  const entry = {
+    tabId: tab.id,
+    render: settings.renderByDefault,
+    preview: settings.previewByDefault,
+    timer: null,
+  };
   composeWindows.set(windowId, entry);
   setToggleAppearance(entry);
   await attach(entry, windowId);
@@ -129,33 +163,51 @@ browser.mdpane.onPaneResized.addListener((_windowId, width) => {
   setSettings({ paneWidth: width });
 });
 
-browser.composeAction.onClicked.addListener(async (tab) => {
-  const entry = composeWindows.get(tab.windowId);
+function toggleRender(windowId) {
+  const entry = composeWindows.get(windowId);
   if (!entry) return;
-  entry.enabled = !entry.enabled;
-  setToggleAppearance(entry);
-  await browser.mdpane.setVisible(tab.windowId, entry.enabled);
-  if (entry.enabled) schedulePreview(tab.windowId, 0);
-  settings.enabledByDefault = entry.enabled;
-  setSettings({ enabledByDefault: entry.enabled });
+  entry.render = !entry.render;
+  settings.renderByDefault = entry.render;
+  setSettings({ renderByDefault: entry.render });
+  applyState(windowId);
+}
+
+function setPreview(windowId, shown) {
+  const entry = composeWindows.get(windowId);
+  if (!entry || entry.preview === shown) return;
+  entry.preview = shown;
+  settings.previewByDefault = shown;
+  setSettings({ previewByDefault: shown });
+  applyState(windowId);
+}
+
+// Two toolbar buttons: "Markdown" (this action) toggles rendering, and "Preview" (added
+// by the Experiment) shows or hides the pane. The pane has its own buttons for the same two.
+browser.composeAction.onClicked.addListener((tab) => toggleRender(tab.windowId));
+
+browser.mdpane.onUserAction.addListener((windowId, action) => {
+  if (action === "toggle-render") toggleRender(windowId);
+  else if (action === "toggle-preview") setPreview(windowId, !composeWindows.get(windowId)?.preview);
+  else if (action === "hide-preview") setPreview(windowId, false);
+  else if (action === "show-preview") setPreview(windowId, true);
 });
 
 browser.compose.onBeforeSend.addListener(async (tab, details) => {
   const entry = composeWindows.get(tab.windowId);
-  if (!entry?.enabled || !details.plainTextBody?.trim()) return {};
+  if (!entry?.render || !details.plainTextBody?.trim()) return {};
 
   if (details.isPlainText) {
     await notify(
       "Markdown was not converted",
       "This message is being composed as plain text, which cannot carry rendered HTML. " +
         "Start a new message with Shift+Write (or Shift+Reply) to compose in HTML, " +
-        "or turn Markdown off with the MD button, then send again."
+        "or turn Markdown off with the toolbar button, then send again."
     );
     return { cancel: true };
   }
 
   try {
-    const html = await renderCompose(details, (rendered) => inlineStyles(rendered));
+    const html = await renderCompose(details, { finish: (rendered) => inlineStyles(rendered) });
     // "Only Plain Text" delivery would flatten the rendered HTML again.
     const deliveryFormat = details.deliveryFormat === "plaintext" ? "both" : details.deliveryFormat;
     return { details: deliveryFormat ? { body: html, deliveryFormat } : { body: html } };
@@ -163,7 +215,7 @@ browser.compose.onBeforeSend.addListener(async (tab, details) => {
     console.error("Markdown render failed on send", e);
     await notify(
       "Markdown rendering failed",
-      "The message was not sent. Turn Markdown off with the MD button to send it as written."
+      "The message was not sent. Turn Markdown off with the toolbar button to send it as written."
     );
     return { cancel: true };
   }

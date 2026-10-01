@@ -1,6 +1,6 @@
 {
   "name": "thunderbird-markdown-preview",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "Live GitHub-style Markdown preview pane and send-as-HTML for Thunderbird compose",

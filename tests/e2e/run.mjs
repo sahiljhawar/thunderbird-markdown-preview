@@ -26,7 +26,9 @@ tb.stderr.on("data", (d) => (log += d));
 
 const WIN = `const win = Services.wm.getMostRecentWindow("msgcompose"); `;
 const BUTTON = `const b = win.document.querySelector('[id*="composeAction"]');`;
-const PANE_ON = `win.document.getElementById("messageArea").classList.contains("mdp-on")`;
+// The pane is either expanded or collapsed to a narrow tab; "render" is a separate toggle.
+const PANE_EXPANDED = `(win.document.getElementById("messageArea").classList.contains("mdp-on") && !win.document.getElementById("messageArea").classList.contains("mdp-collapsed"))`;
+const RENDER_ON = `(win.document.getElementById("mdp-render")?.getAttribute("aria-pressed") === "true")`;
 let m;
 
 async function waitFor(what, script, { timeout = 15000, args = [] } = {}) {
@@ -93,6 +95,40 @@ async function sendLaterAndWait(expectedCount) {
 }
 
 const clickToggle = () => m.run(WIN + BUTTON + `b.click(); return true;`);
+
+/** Puts the window into the given state (render on/off, preview expanded/collapsed) by clicking the real controls. */
+async function ensureState({ render, preview }) {
+  if (render !== undefined && (await m.run(WIN + `return ${RENDER_ON};`)) !== render) {
+    await clickToggle();
+    await waitFor(`render ${render}`, WIN + `return ${RENDER_ON} === ${render};`);
+  }
+  if (preview !== undefined && (await m.run(WIN + `return ${PANE_EXPANDED};`)) !== preview) {
+    await m.run(WIN + `win.document.getElementById(arguments[0]).click(); return true;`, [preview ? "mdp-tab" : "mdp-hide"]);
+    await waitFor(`preview ${preview}`, WIN + `return ${PANE_EXPANDED} === ${preview};`);
+  }
+}
+
+async function openReply() {
+  await m.run(
+    `return (async () => {
+       const { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
+       const inbox = MailServices.accounts.localFoldersServer.rootFolder.getChildNamed("Inbox");
+       let db = null;
+       for (let i = 0; i < 20 && !db; i++) {
+         try { db = inbox.msgDatabase; } catch {
+           if (i === 0) inbox.updateFolder(null); // the fixture has no summary file yet: this parses it
+           await new Promise((r) => setTimeout(r, 500));
+         }
+       }
+       const hdr = [...db.enumerateMessages()][0];
+       MailServices.compose.OpenComposeWindow(null, hdr, inbox.getUriForMsg(hdr), Ci.nsIMsgCompType.Reply,
+         Ci.nsIMsgCompFormat.HTML, MailServices.accounts.allIdentities[0], null, null);
+       return true;
+     })();`
+  );
+  await waitFor("reply editor", WIN + `return !!win?.document.getElementById("messageEditor")?.contentDocument?.querySelector("blockquote[type=cite]");`);
+  await waitFor("pane to settle", WIN + `return win.document.getElementById("mdp-pane")?.dataset.state === "settled";`);
+}
 const step = (name) => console.log(`- ${name}`);
 
 try {
@@ -109,7 +145,8 @@ try {
   await openCompose();
 
   step("pane sits to the right of a full-size editor");
-  await waitFor("pane visible after the editor settled", WIN + `return ${PANE_ON};`);
+  await ensureState({ render: true, preview: true });
+  await waitFor("pane visible after the editor settled", WIN + `return ${PANE_EXPANDED};`);
   const layout = await m.run(
     WIN + `const r = (id) => { const b = win.document.getElementById(id).getBoundingClientRect(); return { x: b.x, w: b.width, h: b.height }; };
            return { editor: r("messageEditor"), pane: r("mdp-pane"), handle: r("mdp-handle") };`
@@ -171,14 +208,61 @@ try {
   console.log(`  pane width: ${before} -> ${after}`);
   assert.equal(Math.round(after), 300, "pane follows the pointer");
 
-  step("toggle button hides and shows the pane");
+  step("the toolbar button toggles rendering and leaves the preview showing");
   const buttonId = await m.run(WIN + BUTTON + `return b ? b.id : null;`);
   assert.ok(buttonId, "compose action button exists");
   await clickToggle();
-  await waitFor("pane hidden", WIN + `return !${PANE_ON};`);
-  assert.ok((await editorWidth()) > layout.editor.w, "editor reclaims the width when the pane is hidden");
+  await waitFor("render off", WIN + `return !${RENDER_ON};`);
+  assert.ok(await m.run(WIN + `return ${PANE_EXPANDED};`), "the preview is still expanded when rendering is off");
+  // Off: the pane shows the message as usual (the Markdown source as typed), not a rendering.
+  const offPreview = await waitFor("message as written in the pane", WIN + `const h = win.document.getElementById("mdp-frame").contentDocument.body.innerHTML; return h.includes("# Big title") ? h : null;`);
+  assert.match(offPreview, /\*\*bold\*\*/, "the Markdown source is shown as typed");
+  assert.doesNotMatch(offPreview, /<h1|<strong>|<table/, "nothing is rendered while rendering is off");
+  const offStatus = await m.run(WIN + `const s = win.document.getElementById("mdp-status"); return s.hidden ? "" : s.textContent;`);
+  assert.match(offStatus, /rendering is off/i, "the pane says rendering is off");
   await clickToggle();
-  await waitFor("pane visible", WIN + `return ${PANE_ON};`);
+  await waitFor("render on", WIN + `return ${RENDER_ON};`);
+  await waitFor("rendered again", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes("<h1>");`);
+
+  step("the pane's own button toggles rendering too");
+  await m.run(WIN + `win.document.getElementById("mdp-render").click(); return true;`);
+  await waitFor("render off via pane", WIN + `return !${RENDER_ON};`);
+  await m.run(WIN + `win.document.getElementById("mdp-render").click(); return true;`);
+  await waitFor("render on via pane", WIN + `return ${RENDER_ON};`);
+
+  step("the Preview toolbar button shows and hides the pane, independent of rendering");
+  const toolbar = await m.run(WIN + `const t = win.document.getElementById("composeToolbar2");
+    const ids = [...t.children].map((c) => c.id);
+    const pb = win.document.getElementById("mdp-preview-button");
+    return { has: !!pb, parent: pb?.parentNode?.id, label: pb?.getAttribute("label"), checked: pb?.checked,
+             nextToMarkdown: ids.indexOf("mdp-preview-button") === ids.findIndex((i) => i.endsWith("-composeAction-toolbarbutton")) + 1 };`);
+  console.log("  toolbar:", JSON.stringify(toolbar));
+  assert.ok(toolbar.has && toolbar.parent === "composeToolbar2", "Preview button is in the compose toolbar");
+  assert.ok(toolbar.nextToMarkdown, "Preview button sits right next to the Markdown button");
+  assert.equal(toolbar.checked, true, "Preview button is pressed when the pane is shown");
+  assert.match(toolbar.label, /Preview: on/);
+  await m.run(WIN + `win.document.getElementById("mdp-preview-button").click(); return true;`);
+  await waitFor("collapsed via toolbar", WIN + `return !${PANE_EXPANDED};`);
+  assert.equal(await m.run(WIN + `return win.document.getElementById("mdp-preview-button").getAttribute("label");`), "Preview: off");
+  assert.equal(await m.run(WIN + `return win.document.getElementById("mdp-preview-button").checked;`), false, "Preview button is unpressed when the pane is hidden");
+  assert.ok(await m.run(WIN + `return ${RENDER_ON};`), "hiding the pane leaves rendering on");
+  await clickToggle(); // rendering off while the pane is hidden
+  await waitFor("render off", WIN + `return !${RENDER_ON};`);
+  assert.ok(!(await m.run(WIN + `return ${PANE_EXPANDED};`)), "turning rendering off does not show the pane");
+  await clickToggle();
+  await waitFor("render on", WIN + `return ${RENDER_ON};`);
+  await m.run(WIN + `win.document.getElementById("mdp-preview-button").click(); return true;`);
+  await waitFor("expanded via toolbar", WIN + `return ${PANE_EXPANDED};`);
+  assert.equal(await m.run(WIN + `return win.document.getElementById("mdp-preview-button").checked;`), true, "Preview button is pressed when the pane is shown");
+
+  step("Hide collapses the pane to a tab and the tab brings it back");
+  const expandedEditor = await editorWidth();
+  await m.run(WIN + `win.document.getElementById("mdp-hide").click(); return true;`);
+  await waitFor("collapsed", WIN + `return !${PANE_EXPANDED} && win.document.getElementById("mdp-tab").getBoundingClientRect().width > 10;`);
+  assert.ok((await editorWidth()) > expandedEditor, "editor reclaims the width when the pane is collapsed");
+  assert.ok(await m.run(WIN + `return ${RENDER_ON};`), "hiding the preview does not change rendering");
+  await m.run(WIN + `win.document.getElementById("mdp-tab").click(); return true;`);
+  await waitFor("expanded again", WIN + `return ${PANE_EXPANDED};`);
 
   step("Send Later stores rendered, inline-styled HTML with a plain-text part");
   const sent = await sendLaterAndWait(1);
@@ -195,10 +279,17 @@ try {
   // ---- 2. Toggle off: message goes out untouched ----------------------------------------
   step("with Markdown off, the message is sent as written");
   await openCompose();
+  await ensureState({ render: true, preview: true });
   await typeText("# Untouched heading\n\nplain **words**");
   await waitFor("preview", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes("Untouched");`);
-  await clickToggle();
-  await waitFor("pane hidden", WIN + `return !${PANE_ON};`);
+  await ensureState({ render: false });
+  assert.ok(await m.run(WIN + `return ${PANE_EXPANDED};`), "turning rendering off does not hide the pane");
+  await waitFor("message as written", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes("# Untouched heading");`);
+  await m.run(WIN + `win.GetCurrentEditor().insertText(" more"); return true;`);
+  await waitFor("typing shows up as written", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes("more");`);
+  const asWritten = await previewHtml();
+  assert.match(asWritten, /# Untouched heading/);
+  assert.doesNotMatch(asWritten, /<h1|<strong>/, "typing while rendering is off does not render anything");
   const untouched = await sendLaterAndWait(2);
   // Thunderbird downgrades unformatted HTML to plain text on its own, so check the whole message.
   assert.match(untouched, /# Untouched heading/, "raw markdown text is kept");
@@ -207,8 +298,8 @@ try {
   // ---- 2b. "Only Plain Text" delivery must not undo the rendering ----------------------
   step("plain-text delivery format is overridden so the rendered HTML survives");
   await openCompose();
-  if (!(await m.run(WIN + `return ${PANE_ON};`))) await clickToggle();
-  await waitFor("pane visible", WIN + `return ${PANE_ON};`);
+  assert.equal(await m.run(WIN + `return ${RENDER_ON};`), false, "the last choice (off) is remembered for new messages");
+  await ensureState({ render: true, preview: true });
   await m.run(WIN + `win.gMsgCompose.compFields.deliveryFormat = Ci.nsIMsgCompSendFormat.PlainText; return true;`);
   await typeText("## Delivery check\n\n*emphasis*");
   await waitFor("preview", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes("Delivery check");`);
@@ -231,7 +322,7 @@ try {
     [join(root, "tbtest", "sig.html")]
   );
   await openCompose();
-  if (!(await m.run(WIN + `return ${PANE_ON};`))) await clickToggle();
+  await ensureState({ render: true, preview: true });
   await waitFor("signature in editor", WIN + `return !!win.document.getElementById("messageEditor").contentDocument.querySelector(".moz-signature");`);
   await m.run(WIN + `const ed = win.GetCurrentEditor(); ed.beginningOfDocument(); ed.insertText("Hello **there**"); return true;`);
   const sigPreview = await waitFor("preview with signature", WIN + `const h = win.document.getElementById("mdp-frame").contentDocument.body.innerHTML;
@@ -275,7 +366,7 @@ try {
         if (bold) { ed.selection.collapse(bold.firstChild, 2); ed.insertText("ZZ"); }
         return { before, first: doc.body.firstElementChild?.textContent,
                  editable: !!bold && bold.textContent === "JaZZne Doe",
-                 pane: ${PANE_ON}, sigHtml: sig?.innerHTML ?? null };`
+                 pane: ${PANE_EXPANDED}, sigHtml: sig?.innerHTML ?? null };`
     );
     assert.equal(state.before, "P,DIV.moz-signature", `window ${i + 1}: paragraph first, then the signature (got ${state.before})`);
     assert.equal(state.first, "typed", `window ${i + 1}: typed text lands above the signature`);
@@ -291,19 +382,40 @@ try {
      MailServices.accounts.allIdentities[0].attachSignature = false; return true;`
   );
 
+  // ---- 2e. Replies: the quoted message must not be re-rendered -----------------------
+  step("a reply keeps the quoted message and its signature as the original HTML");
+  await openReply();
+  await ensureState({ render: true, preview: true });
+  await m.run(WIN + `const ed = win.GetCurrentEditor(); ed.endOfDocument(); ed.insertText("My **reply** here"); return true;`);
+  const replyPreview = await waitFor("reply preview", WIN + `const h = win.document.getElementById("mdp-frame").contentDocument.body.innerHTML;
+    return h.includes("reply") && h.includes("<strong>reply</strong>") ? h : null;`);
+  assert.match(replyPreview, /<strong>reply<\/strong>/, "my text is rendered");
+  assert.match(replyPreview, /<b>plan<\/b>/, "the quote's bold is still bold");
+  assert.doesNotMatch(replyPreview, /<em>plan<\/em>/, "the quote's bold did not turn into italics");
+  assert.match(replyPreview, />the plan<\/a>/, "the quote's link text is unchanged");
+  assert.doesNotMatch(replyPreview, />https:\/\/example\.invalid\/plan<\/a>/, "no duplicated bare URL");
+  assert.match(replyPreview, /wrote:/, "the cite line is kept");
+  assert.match(replyPreview, /-- <br>\s*Bob Builder/, "the other person's signature is untouched");
+  assert.doesNotMatch(replyPreview, /<h2>/, "'-- ' did not turn a line into a heading");
+  const replySent = await sendLaterAndWait(5);
+  const replyHtml = replySent.slice(replySent.indexOf("Content-Type: text/html"));
+  assert.match(replyHtml, /<blockquote type="cite"/, "the quote is still a quote");
+  assert.match(replyHtml, /<b>plan<\/b>/, "the quote's bold survives in the sent mail");
+  assert.doesNotMatch(replyHtml, /<em>plan<\/em>|\*plan\*/, "the quote was not re-rendered");
+  assert.match(replyHtml, /<strong[^>]*>reply<\/strong>/, "my reply is rendered in the sent mail");
+  assert.match(replyHtml, /Bob Builder<br>\s*Builders Inc/, "the quoted signature is intact in the sent mail");
+
   // ---- 3. Plain-text compose: warn and refuse to send raw markdown ---------------------
   step("plain-text compose shows a warning and cancels the send");
   await openCompose({ plain: true });
-  // The last toggle choice (off) is remembered for new windows: switch it on again.
-  if (!(await m.run(WIN + `return ${PANE_ON};`))) await clickToggle();
-  await waitFor("pane visible", WIN + `return ${PANE_ON};`);
+  await ensureState({ render: true, preview: true });
   await typeText("# Plain mode\n\ntext");
   const status = await waitFor("plain-text warning", WIN + `const s = win.document.getElementById("mdp-status"); return s.hidden ? null : s.textContent;`);
   console.log("  status:", status);
   assert.match(status, /Plain-text message/);
   await m.run(WIN + `win.goDoCommand("cmd_sendLater"); return true;`);
   await sleep(2500);
-  assert.equal(readOutbox().length, 4, "send was cancelled, nothing new in the outbox");
+  assert.equal(readOutbox().length, 5, "send was cancelled, nothing new in the outbox");
   assert.ok(await m.run(WIN + `return !!win;`), "compose window is still open");
 
   // ---- 4. Removing the add-on cleans the window ---------------------------------------
@@ -311,7 +423,7 @@ try {
   await m.send("Addon:Uninstall", { id: addonId });
   await waitFor(
     "pane removed",
-    WIN + `return !win.document.getElementById("mdp-pane") && !win.document.getElementById("mdp-style") && !${PANE_ON};`
+    WIN + `return !win.document.getElementById("mdp-pane") && !win.document.getElementById("mdp-style") && !win.document.getElementById("mdp-preview-button") && !win.document.getElementById("messageArea").classList.contains("mdp-on");`
   );
   assert.ok((await editorWidth()) > layout.editor.w + layout.pane.w / 2, "editor is full width again");
 

@@ -2,7 +2,7 @@
 // Throwaway Thunderbird profile with a Local Folders account and one identity,
 // so a compose window can open and "Send Later" works without any network.
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export function createProfile(dir) {
@@ -43,5 +43,9 @@ export function createProfile(dir) {
     .map(([k, v]) => `user_pref(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
     .join("\n");
   writeFileSync(join(dir, "user.js"), user + "\n");
+
+  // One received message in the Inbox, so replies and forwards can be tested.
+  const eml = readFileSync(new URL("./fixtures/thread.eml", import.meta.url), "utf8").replace(/\r?\n/g, "\r\n");
+  writeFileSync(join(dir, "Mail", "Local Folders", "Inbox"), `From - Tue Sep 29 10:00:00 2026\r\n${eml}\r\n`);
   return dir;
 }

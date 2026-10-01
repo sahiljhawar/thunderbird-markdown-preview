@@ -1,0 +1,9 @@
+From: Bob Builder <bob@example.invalid>
+To: E2E Tester <e2e@example.invalid>
+Subject: Project plan
+Message-ID: <thread-1@example.invalid>
+Date: Tue, 29 Sep 2026 10:00:00 +0200
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><body><p>Hi, here is the <b>plan</b>:</p><ul><li>one</li><li>two</li></ul><p>See <a href="https://example.invalid/plan">the plan</a>.</p>-- <br>Bob Builder<br>Builders Inc<br><a href="https://builders.example">builders.example</a></body></html>

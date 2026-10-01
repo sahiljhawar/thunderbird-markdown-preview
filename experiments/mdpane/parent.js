@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* Privileged part of the extension: the only code that touches Thunderbird's
- * own UI. It depends on exactly two element ids in the compose window
- * (#messageArea and #messageEditor) and cleans up after itself on shutdown.
- * Everything else lives in the background page and uses public APIs. */
+ * own UI. It depends on a few element ids in the compose window (#messageArea,
+ * #messageEditor and the toolbar #composeToolbar2) and cleans up after itself on
+ * shutdown. Everything else lives in the background page and uses public APIs. */
 
 "use strict";
 
@@ -15,6 +15,11 @@ const ID = {
   style: "mdp-style",
   handle: "mdp-handle",
   pane: "mdp-pane",
+  header: "mdp-header",
+  render: "mdp-render",
+  hide: "mdp-hide",
+  tab: "mdp-tab",
+  previewButton: "mdp-preview-button",
   status: "mdp-status",
   frame: "mdp-frame",
 };
@@ -39,7 +44,28 @@ const CHROME_CSS = `
   grid-column: 1; grid-row: 1; justify-self: stretch; align-self: stretch; min-width: 0;
 }
 #messageArea.mdp-on > #FindToolbar { grid-column: 1; grid-row: 2; }
-#mdp-handle, #mdp-pane { display: none; }
+#messageArea.mdp-on.mdp-collapsed { grid-template-columns: minmax(0, 1fr) 26px; }
+#mdp-handle, #mdp-pane, #mdp-tab { display: none; }
+#messageArea.mdp-on.mdp-collapsed > #mdp-handle,
+#messageArea.mdp-on.mdp-collapsed > #mdp-pane { display: none; }
+#messageArea.mdp-on.mdp-collapsed > #mdp-tab {
+  display: flex; grid-column: 2; grid-row: 1 / span 2; align-items: center; justify-content: center;
+  padding: 8px 0; margin: 0; border: 0; border-radius: 0; cursor: pointer;
+  writing-mode: vertical-rl; font: inherit; font-size: 12px;
+  background: color-mix(in srgb, CanvasText 8%, Canvas); color: CanvasText;
+  border-inline-start: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+}
+#messageArea.mdp-on.mdp-collapsed > #mdp-tab:hover { background: color-mix(in srgb, CanvasText 16%, Canvas); }
+#mdp-preview-button { -moz-context-properties: fill, fill-opacity; fill: currentColor; }
+#mdp-header {
+  flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  background: color-mix(in srgb, CanvasText 8%, Canvas);
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+}
+#mdp-header .mdp-title { flex: 1; font-size: 12px; font-weight: 600; }
+#mdp-header button { font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+#mdp-render[aria-pressed="true"] { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+#mdp-render[aria-pressed="false"] { background: color-mix(in srgb, CanvasText 12%, Canvas); }
 #messageArea.mdp-on > #mdp-handle {
   display: block; grid-column: 2; grid-row: 1 / span 2;
   cursor: col-resize; touch-action: none;
@@ -67,6 +93,7 @@ const FRAME_CSP =
 const panes = new Map();
 const inputListeners = new Set();
 const resizeListeners = new Set();
+const actionListeners = new Set();
 
 function emit(listeners, ...args) {
   for (const listener of listeners) {
@@ -123,7 +150,7 @@ function getWindow(context, windowId) {
 
 function removeAll(win) {
   const doc = win.document;
-  doc.getElementById("messageArea")?.classList.remove("mdp-on");
+  doc.getElementById("messageArea")?.classList.remove("mdp-on", "mdp-collapsed");
   for (const id of Object.values(ID)) doc.getElementById(id)?.remove();
 }
 
@@ -208,14 +235,61 @@ function whenEditorSettled(win) {
   });
 }
 
-/** Shows or hides the pane, but never before the editor has settled. */
-function applyVisibility(state) {
-  if (!state.settled) return;
-  if (state.visible) ensureFrameDocument(state);
-  state.win.document.getElementById("messageArea")?.classList.toggle("mdp-on", state.visible);
+/** Updates the header button label from the render state (safe before the editor has settled). */
+function updateRenderButton(state) {
+  const button = state.renderButton;
+  button.setAttribute("aria-pressed", String(state.renderOn));
+  button.textContent = state.renderOn ? "Render on send: On" : "Render on send: Off";
 }
 
-function buildPane(win, windowId, { css, width, visible }) {
+/**
+ * Adds the "Preview" toggle to the compose toolbar, next to the extension's own
+ * "Markdown" button (an extension can only declare one toolbar button, so the second
+ * one is created here). Created once the editor has settled, because adding a button
+ * can change the toolbar height and so resize the editor. Failure to find the toolbar
+ * is harmless: the pane's own Hide button and the tab still work.
+ */
+function ensureToolbarButton(state) {
+  const doc = state.win.document;
+  let button = doc.getElementById(ID.previewButton);
+  if (!button) {
+    const toolbar = doc.getElementById("composeToolbar2");
+    if (!toolbar || typeof doc.createXULElement !== "function") return;
+    button = doc.createXULElement("toolbarbutton");
+    button.id = ID.previewButton;
+    button.setAttribute("class", "toolbarbutton-1");
+    button.setAttribute("type", "checkbox");
+    if (state.iconUrl) button.setAttribute("image", state.iconUrl);
+    button.addEventListener("command", () => emit(actionListeners, state.windowId, "toggle-preview"));
+    const anchor = toolbar.querySelector('toolbarbutton[id$="-composeAction-toolbarbutton"]');
+    if (anchor) anchor.after(button);
+    else toolbar.appendChild(button);
+  }
+  button.toggleAttribute("checked", state.visible); // presence means pressed
+  button.checked = state.visible;
+  button.setAttribute("label", state.visible ? "Preview: on" : "Preview: off");
+  button.setAttribute(
+    "tooltiptext",
+    state.visible ? "Preview pane: shown (click to hide)" : "Preview pane: hidden (click to show)"
+  );
+}
+
+/**
+ * Applies the pane layout, but never before the editor has settled. The pane is
+ * either expanded or collapsed to a narrow tab; it is never removed, so the
+ * editor is never resized back and forth by the render toggle.
+ */
+function applyState(state) {
+  updateRenderButton(state);
+  if (!state.settled) return;
+  ensureToolbarButton(state);
+  if (state.visible) ensureFrameDocument(state);
+  const area = state.win.document.getElementById("messageArea");
+  area?.classList.add("mdp-on");
+  area?.classList.toggle("mdp-collapsed", !state.visible);
+}
+
+function buildPane(win, windowId, { css, width, render, preview }, iconUrl) {
   const doc = win.document;
   const area = doc.getElementById("messageArea");
   const editor = doc.getElementById("messageEditor");
@@ -237,13 +311,29 @@ function buildPane(win, windowId, { css, width, visible }) {
   handle.setAttribute("role", "separator");
   handle.setAttribute("aria-orientation", "vertical");
   const pane = make("div", ID.pane);
+  const header = make("div", ID.header);
+  const title = doc.createElementNS(HTML_NS, "span");
+  title.className = "mdp-title";
+  title.textContent = "Markdown preview";
+  const renderButton = make("button", ID.render);
+  renderButton.type = "button";
+  renderButton.title = "Turn Markdown rendering on or off for this message (the message is sent as written when off)";
+  const hideButton = make("button", ID.hide);
+  hideButton.type = "button";
+  hideButton.textContent = "Hide";
+  hideButton.title = "Hide the preview pane";
+  header.append(title, renderButton, hideButton);
   const status = make("div", ID.status);
   status.hidden = true;
   const frame = make("iframe", ID.frame);
   frame.setAttribute("sandbox", "");
   frame.setAttribute("title", "Markdown preview");
-  pane.append(status, frame);
-  area.append(handle, pane);
+  pane.append(header, status, frame);
+  const tab = make("button", ID.tab);
+  tab.type = "button";
+  tab.textContent = "\u2039 Markdown preview";
+  tab.title = "Show the preview pane";
+  area.append(handle, pane, tab);
   area.style.setProperty("--mdp-width", `${width || DEFAULT_WIDTH}px`);
 
   const state = {
@@ -251,9 +341,12 @@ function buildPane(win, windowId, { css, width, visible }) {
     windowId,
     frame,
     status,
+    renderButton,
+    iconUrl,
     css,
     html: "",
-    visible: visible !== false,
+    visible: preview !== false, // preview pane shown (otherwise collapsed to a tab)
+    renderOn: render !== false, // Markdown is rendered when the message is sent
     settled: false,
     boundDoc: null,
     timer: null,
@@ -261,6 +354,12 @@ function buildPane(win, windowId, { css, width, visible }) {
     onScroll: () => syncScroll(state),
     cleanup: [],
   };
+
+  // The Experiment only reports clicks; the background owns the state and answers with setState.
+  renderButton.addEventListener("click", () => emit(actionListeners, windowId, "toggle-render"));
+  hideButton.addEventListener("click", () => emit(actionListeners, windowId, "hide-preview"));
+  tab.addEventListener("click", () => emit(actionListeners, windowId, "show-preview"));
+  updateRenderButton(state);
 
   ensureFrameDocument(state);
   // A frame's initial about:blank document can be replaced by the asynchronous
@@ -311,7 +410,7 @@ function buildPane(win, windowId, { css, width, visible }) {
     state.settled = true;
     pane.dataset.state = "settled";
     ensureFrameDocument(state);
-    applyVisibility(state);
+    applyState(state);
     emit(inputListeners, windowId); // first preview, now that the content is stable
   });
   return state;
@@ -340,6 +439,7 @@ var mdpane = class extends ExtensionAPI {
     for (const windowId of [...panes.keys()]) detach(windowId);
     inputListeners.clear();
     resizeListeners.clear();
+    actionListeners.clear();
   }
 
   getAPI(context) {
@@ -359,7 +459,7 @@ var mdpane = class extends ExtensionAPI {
           const win = getWindow(context, windowId);
           if (!win) return false;
           try {
-            return buildPane(win, windowId, options) !== null;
+            return buildPane(win, windowId, options, context.extension.baseURL + "icons/preview.svg") !== null;
           } catch (e) {
             console.error("[mdpane] attachPane failed", e);
             Services.console.logStringMessage(`[mdpane] attachPane failed: ${e} ${e?.stack ?? ""}`);
@@ -378,11 +478,12 @@ var mdpane = class extends ExtensionAPI {
           state.status.dataset.kind = kind || "info";
           state.status.hidden = !text;
         },
-        async setVisible(windowId, visible) {
+        async setState(windowId, newState) {
           const state = panes.get(windowId);
           if (!state) return;
-          state.visible = !!visible;
-          applyVisibility(state);
+          if (typeof newState.render === "boolean") state.renderOn = newState.render;
+          if (typeof newState.preview === "boolean") state.visible = newState.preview;
+          applyState(state);
         },
         async htmlToText(html) {
           const utils = Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils);
@@ -399,6 +500,7 @@ var mdpane = class extends ExtensionAPI {
         },
         onEditorInput: listenerEvent(inputListeners),
         onPaneResized: listenerEvent(resizeListeners),
+        onUserAction: listenerEvent(actionListeners),
       },
     };
   }
