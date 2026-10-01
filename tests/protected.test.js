@@ -87,3 +87,34 @@ test("the preview does not load remote images or keep active elements", () => {
   assert.doesNotMatch(safe, /tracker\.example|<script|<meta/);
   assert.match(safe, /data:image\/png/);
 });
+
+const PNG =
+  '<img src="data:image/png;base64,iVBORw0KGgo=" width="40" height="30" alt="shot">';
+
+test("a pasted image is lifted to an inline token and restored where it was", () => {
+  const { html, images } = liftProtected(`<p>before ${PNG} after</p>`, env);
+  assert.equal(images.length, 1);
+  assert.match(images[0], /^<img src="data:image\/png;base64,iVBORw0KGgo="/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /before MDPIMAGEMARK0 after/);
+  const out = restoreBlocks(createRenderer()("before MDPIMAGEMARK0 after"), [], images);
+  assert.match(out, /<p>before <img src="data:image\/png;base64,iVBORw0KGgo=" [^>]*> after<\/p>/);
+});
+
+test("an image alone on a line survives rendering and inlining", () => {
+  const { html, images } = liftProtected(`<p>**hi**</p><p>${PNG}</p>`, env);
+  assert.equal(images.length, 1);
+  const rendered = inlineStyles(createRenderer()(html.replace(/<\/?p>/g, "\n").trim()), env);
+  assert.match(restoreBlocks(rendered, [], images), /<img src="data:image\/png/);
+});
+
+test("images in a quote or signature stay inside that block", () => {
+  const { blocks, images } = liftProtected(`<blockquote type="cite">${PNG}</blockquote><p>${PNG}</p>`, env);
+  assert.equal(blocks.length, 1);
+  assert.match(blocks[0], /<img/);
+  assert.equal(images.length, 1);
+});
+
+test("no images means no image list", () => {
+  assert.deepEqual(liftProtected("<p>hi</p>", env).images, []);
+});

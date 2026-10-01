@@ -61,7 +61,8 @@ async function applyState(windowId) {
 /**
  * Renders the compose body. Only what you typed goes through Markdown. Everything else
  * stays as the HTML it already is: your signature, the "On ... wrote:" line, the quoted
- * message of a reply and the forwarded message of a forward (see lib/protected.js).
+ * message of a reply and the forwarded message of a forward, as well as any images you
+ * pasted or inserted (see lib/protected.js).
  *
  * `finish` post-processes the rendered Markdown before those blocks are put back (the
  * send path inlines styles there). With `forPreview`, remote images in the blocks are
@@ -69,12 +70,12 @@ async function applyState(windowId) {
  */
 async function renderCompose(details, { finish = (html) => html, forPreview = false } = {}) {
   if (!details.isPlainText && details.body) {
-    const { html, blocks } = liftProtected(details.body);
-    if (blocks.length) {
+    const { html, blocks, images } = liftProtected(details.body);
+    if (blocks.length || images.length) {
       try {
         const text = await browser.mdpane.htmlToText(html);
         const shown = forPreview ? blocks.map((block) => neutralizeForPreview(block)) : blocks;
-        return restoreBlocks(finish(render(isolateMarks(text))), shown);
+        return restoreBlocks(finish(render(isolateMarks(text))), shown, images);
       } catch (e) {
         console.warn("Block-aware conversion failed, using plain text body", e);
       }

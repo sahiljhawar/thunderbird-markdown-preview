@@ -405,6 +405,24 @@ try {
   assert.match(replyHtml, /<strong[^>]*>reply<\/strong>/, "my reply is rendered in the sent mail");
   assert.match(replyHtml, /Bob Builder<br>\s*Builders Inc/, "the quoted signature is intact in the sent mail");
 
+  // ---- Images: a pasted picture must not vanish ----------------------------------------
+  step("a pasted image survives in the preview and in the sent message");
+  await openCompose();
+  await ensureState({ render: true, preview: true });
+  await typeText("Here is **the shot**:");
+  await m.run(
+    WIN + `const ed = win.GetCurrentEditor(); ed.endOfDocument();
+      ed.insertHTML('<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" width="40" height="30" alt="pasted-shot">');
+      return true;`
+  );
+  const imgPreview = await waitFor("image in preview", WIN + `const h = win.document.getElementById("mdp-frame").contentDocument.body.innerHTML;
+    return h.includes("<img") && h.includes("shot") ? h : null;`);
+  assert.match(imgPreview, /<strong>the shot<\/strong>/, "the text is still rendered");
+  assert.match(imgPreview, /<img[^>]*pasted-shot/, "the image is in the preview");
+  const imgSent = await sendLaterAndWait(6);
+  assert.match(imgSent, /<img[^>]*pasted-shot|Content-Type: image\/png/, "the image is in the sent message");
+  assert.match(imgSent, /<strong[^>]*>the shot<\/strong>/, "the text is rendered in the sent message");
+
   // ---- 3. Plain-text compose: warn and refuse to send raw markdown ---------------------
   step("plain-text compose shows a warning and cancels the send");
   await openCompose({ plain: true });
@@ -415,7 +433,7 @@ try {
   assert.match(status, /Plain-text message/);
   await m.run(WIN + `win.goDoCommand("cmd_sendLater"); return true;`);
   await sleep(2500);
-  assert.equal(readOutbox().length, 5, "send was cancelled, nothing new in the outbox");
+  assert.equal(readOutbox().length, 6, "send was cancelled, nothing new in the outbox");
   assert.ok(await m.run(WIN + `return !!win;`), "compose window is still open");
 
   // ---- 4. Removing the add-on cleans the window ---------------------------------------
