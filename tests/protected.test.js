@@ -118,3 +118,26 @@ test("images in a quote or signature stay inside that block", () => {
 test("no images means no image list", () => {
   assert.deepEqual(liftProtected("<p>hi</p>", env).images, []);
 });
+
+test("a link with a label becomes a Markdown link and renders as the label alone", () => {
+  const { html, linked } = liftProtected('<p>hi <a href="mailto:john@x.org">@John Smith</a>&nbsp;ok</p>', env);
+  assert.equal(linked, true);
+  assert.match(html, /\[@John Smith\]\(mailto:john@x\.org\)/);
+  const out = createRenderer()(html.replace(/<\/?p>/g, ""));
+  assert.match(out, /<a href="mailto:john@x\.org">@John Smith<\/a>/);
+  assert.doesNotMatch(out, /mailto:[^"]*</);
+});
+
+test("a link that shows its own address is left to the text conversion", () => {
+  const { html, linked } = liftProtected(
+    '<p><a href="https://a.example/">https://a.example/</a> <a href="mailto:a@b.c">a@b.c</a></p>',
+    env
+  );
+  assert.equal(linked, false);
+  assert.match(html, /<a href="https:\/\/a\.example\/">/);
+});
+
+test("link destinations with spaces or parentheses are escaped", () => {
+  const { html } = liftProtected('<p><a href="https://a.example/x (1)">page</a></p>', env);
+  assert.match(html, /\[page\]\(https:\/\/a\.example\/x%20%281%29\)/);
+});
