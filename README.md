@@ -79,6 +79,15 @@ Both toggles are remembered for new messages. Options (Add-ons and Themes, then 
 **Options**): the two defaults, single line breaks as line breaks (GitHub comment style, on by
 default), preview delay and pane width.
 
+### Inline code shortcut
+
+While Markdown is on, select some text and press **`** (backtick) or **Ctrl+E** (**Cmd+E** on
+macOS) to wrap it in backticks. The text stays selected, so pressing **Ctrl+E** again removes
+them. With nothing selected, **Ctrl+E** inserts a pair of backticks with the cursor between
+them, and **`** types a backtick as usual. Text that itself contains backticks gets a longer
+fence (``` ``a`b`` ```), so it still renders as one code span. Selections spanning several
+lines are left alone.
+
 ### Things to know
 
 * **HTML messages only.** Rendered HTML cannot be sent from a plain-text message. There the pane

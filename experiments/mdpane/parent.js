@@ -168,12 +168,14 @@ function bindEditor(state) {
     try {
       state.boundDoc.removeEventListener("input", state.onInput, true);
       state.boundDoc.removeEventListener("scroll", state.onScroll, true);
+      state.boundDoc.removeEventListener("keydown", state.onKeyDown, true);
     } catch {
       // The old document is already gone.
     }
   }
   editorDoc.addEventListener("input", state.onInput, true);
   editorDoc.addEventListener("scroll", state.onScroll, true);
+  editorDoc.addEventListener("keydown", state.onKeyDown, true);
   state.boundDoc = editorDoc;
   // Before the editor has settled nothing reads it: the first preview is
   // requested once it has (see buildPane).
@@ -191,6 +193,93 @@ function syncScroll(state) {
   } catch {
     // Scroll sync is a nicety.
   }
+}
+
+/** After an insert, selects `length` characters ending `skip` characters before the caret. */
+function selectBeforeCaret(selection, skip, length) {
+  const node = selection.focusNode;
+  const end = selection.focusOffset - skip;
+  if (node && node.nodeType === node.TEXT_NODE && end - length >= 0) {
+    selection.setBaseAndExtent(node, end - length, node, end);
+  }
+}
+
+/**
+ * The inner text when `range` is directly inside a code span in its text node
+ * (as left selected after wrapping), with the fence plus padding on each side.
+ */
+function surroundingFence(range) {
+  const node = range.startContainer;
+  if (node !== range.endContainer || node.nodeType !== node.TEXT_NODE) return null;
+  const before = node.data.slice(0, range.startOffset).match(/(`+)( ?)$/);
+  const after = node.data.slice(range.endOffset).match(/^( ?)(`+)/);
+  if (!before || !after || before[1] !== after[2] || before[2] !== after[1]) return null;
+  return before[0].length;
+}
+
+/** The content of `text` when it is itself one inline code span, otherwise null. */
+function codeSpanContent(text) {
+  const match = text.match(/^(`+)([\s\S]+?)\1$/);
+  if (!match) return null;
+  const inner = /^ [\s\S]* $/.test(match[2]) && match[2].trim() ? match[2].slice(1, -1) : match[2];
+  return inner.startsWith("`") || inner.endsWith("`") ? null : inner;
+}
+
+/**
+ * Inline code shortcuts while Markdown is on: with text selected, "`" wraps it in
+ * backticks and Ctrl+E (Cmd+E) toggles it. With nothing selected, Ctrl+E inserts a
+ * pair of backticks with the caret between them and "`" types as usual. Selections
+ * over several lines or containing an image are left to the editor.
+ */
+function onEditorKeyDown(state, event) {
+  if (!state.renderOn || event.defaultPrevented || event.isComposing) return;
+  const shortcut =
+    (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "e";
+  if (!shortcut && event.key !== "`") return;
+
+  const editor = state.win.GetCurrentEditor?.();
+  const selection = state.boundDoc?.getSelection();
+  if (!editor || selection?.rangeCount !== 1) return;
+
+  if (selection.isCollapsed) {
+    if (!shortcut) return;
+    event.preventDefault();
+    editor.insertText("``");
+    selectBeforeCaret(selection, 1, 0);
+    return;
+  }
+
+  const range = selection.getRangeAt(0);
+  const text = selection.toString();
+  if (!text.trim() || /[\r\n]/.test(text) || range.cloneContents().querySelector("img")) return;
+  event.preventDefault();
+
+  if (shortcut) {
+    const fence = surroundingFence(range);
+    if (fence) {
+      // Already code (the text between the backticks is selected): unwrap it.
+      range.setStart(range.startContainer, range.startOffset - fence);
+      range.setEnd(range.endContainer, range.endOffset + fence);
+      editor.insertText(text);
+      selectBeforeCaret(selection, 0, text.length);
+      return;
+    }
+    const inner = codeSpanContent(text);
+    if (inner !== null) {
+      editor.insertText(inner);
+      selectBeforeCaret(selection, 0, inner.length);
+      return;
+    }
+  }
+
+  // Whitespace at the edges (a double-click on Windows takes the trailing space) stays
+  // outside the span. The fence is longer than any run of backticks in the text, and is
+  // padded with a space when the text starts or ends with one (CommonMark code spans).
+  const [, lead, core, trail] = text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  const fence = "`".repeat(Math.max(0, ...(core.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  const pad = core.startsWith("`") || core.endsWith("`") ? " " : "";
+  editor.insertText(`${lead}${fence}${pad}${core}${pad}${fence}${trail}`);
+  selectBeforeCaret(selection, pad.length + fence.length + trail.length, core.length);
 }
 
 /**
@@ -352,6 +441,7 @@ function buildPane(win, windowId, { css, width, render, preview }, iconUrl) {
     timer: null,
     onInput: () => emit(inputListeners, windowId),
     onScroll: () => syncScroll(state),
+    onKeyDown: (event) => onEditorKeyDown(state, event),
     cleanup: [],
   };
 
@@ -425,6 +515,7 @@ function detach(windowId) {
     if (state.boundDoc) {
       state.boundDoc.removeEventListener("input", state.onInput, true);
       state.boundDoc.removeEventListener("scroll", state.onScroll, true);
+      state.boundDoc.removeEventListener("keydown", state.onKeyDown, true);
     }
     for (const fn of state.cleanup) fn();
     removeAll(state.win);

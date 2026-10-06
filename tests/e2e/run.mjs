@@ -66,6 +66,41 @@ async function openCompose({ plain = false } = {}) {
 const typeText = (text) =>
   m.run(WIN + `const ed = win.GetCurrentEditor(); ed.selectAll(); ed.deleteSelection(0, 0); ed.insertText(arguments[0]);`, [text]);
 
+const editorText = () =>
+  m.run(WIN + `return win.document.getElementById("messageEditor").contentDocument.body.textContent.replaceAll("\\u00a0", " ");`);
+
+const selectedText = () =>
+  m.run(WIN + `return win.document.getElementById("messageEditor").contentDocument.getSelection().toString();`);
+
+/** Selects the first occurrence of `needle` in the editor body. */
+const selectText = (needle) =>
+  m.run(
+    WIN + `const doc = win.document.getElementById("messageEditor").contentDocument;
+      const walker = doc.createTreeWalker(doc.body, 4 /* NodeFilter.SHOW_TEXT */);
+      for (let n; (n = walker.nextNode()); ) {
+        const i = n.data.indexOf(arguments[0]);
+        if (i >= 0) { doc.getSelection().setBaseAndExtent(n, i, n, i + arguments[0].length); return true; }
+      }
+      throw new Error("not in the editor: " + arguments[0]);`,
+    [needle]
+  );
+
+/** Presses a key in the editor as real (trusted) keyboard events, optionally with Ctrl held. */
+const pressKey = (key, { ctrl = false } = {}) =>
+  m.run(
+    WIN + `const cw = win.document.getElementById("messageEditor").contentWindow;
+      cw.focus();
+      const tip = Cc["@mozilla.org/text-input-processor;1"].createInstance(Ci.nsITextInputProcessor);
+      tip.beginInputTransactionForTests(cw);
+      const ev = (key) => new cw.KeyboardEvent("", { key });
+      if (arguments[1]) tip.keydown(ev("Control"));
+      tip.keydown(ev(arguments[0]));
+      tip.keyup(ev(arguments[0]));
+      if (arguments[1]) tip.keyup(ev("Control"));
+      return true;`,
+    [key, ctrl]
+  );
+
 const previewHtml = () =>
   m.run(WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML;`);
 
@@ -422,6 +457,33 @@ try {
   const imgSent = await sendLaterAndWait(6);
   assert.match(imgSent, /<img[^>]*pasted-shot|Content-Type: image\/png/, "the image is in the sent message");
   assert.match(imgSent, /<strong[^>]*>the shot<\/strong>/, "the text is rendered in the sent message");
+
+  // ---- Inline code shortcuts -----------------------------------------------------------
+  step("backtick and Ctrl+E wrap the selection in backticks, Ctrl+E toggles it off again");
+  await openCompose();
+  await ensureState({ render: true });
+  await typeText("call foo now and a`b too");
+  await selectText("foo");
+  await pressKey("`");
+  assert.equal(await editorText(), "call `foo` now and a`b too", "backtick wraps the selection");
+  assert.equal(await selectedText(), "foo", "the wrapped text stays selected");
+  await pressKey("e", { ctrl: true });
+  assert.equal(await editorText(), "call foo now and a`b too", "Ctrl+E on code unwraps it");
+  await pressKey("e", { ctrl: true });
+  assert.equal(await editorText(), "call `foo` now and a`b too", "Ctrl+E wraps it again");
+  await selectText("a`b");
+  await pressKey("e", { ctrl: true });
+  assert.equal(await editorText(), "call `foo` now and ``a`b`` too", "a backtick inside gets a longer fence");
+  await waitFor("code in preview", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes("<code>a\`b</code>");`);
+  await m.run(WIN + `win.GetCurrentEditor().endOfDocument(); return true;`);
+  await pressKey("`");
+  assert.equal(await editorText(), "call `foo` now and ``a`b`` too`", "with nothing selected a backtick types as usual");
+  await ensureState({ render: false });
+  await selectText("now");
+  await pressKey("`");
+  assert.equal(await editorText(), "call `foo` ` and ``a`b`` too`", "with Markdown off a backtick replaces the selection");
+  await ensureState({ render: true });
+  await m.run(WIN + `win.gContentChanged = false; win.close(); return true;`);
 
   // ---- 3. Plain-text compose: warn and refuse to send raw markdown ---------------------
   step("plain-text compose shows a warning and cancels the send");

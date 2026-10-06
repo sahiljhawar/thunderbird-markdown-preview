@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Markdown Compose Preview",
   "short_name": "MD Preview",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Write Markdown in the compose window, see a live GitHub-style preview in a right-hand pane, and send the rendered HTML.",
   "icons": {
     "48": "icons/icon.svg",
