@@ -120,8 +120,8 @@ test("no images means no image list", () => {
 });
 
 test("a link with a label becomes a Markdown link and renders as the label alone", () => {
-  const { html, linked } = liftProtected('<p>hi <a href="mailto:john@x.org">@John Smith</a>&nbsp;ok</p>', env);
-  assert.equal(linked, true);
+  const { html, rewritten } = liftProtected('<p>hi <a href="mailto:john@x.org">@John Smith</a>&nbsp;ok</p>', env);
+  assert.equal(rewritten, true);
   assert.match(html, /\[@John Smith\]\(mailto:john@x\.org\)/);
   const out = createRenderer()(html.replace(/<\/?p>/g, ""));
   assert.match(out, /<a href="mailto:john@x\.org">@John Smith<\/a>/);
@@ -129,15 +129,46 @@ test("a link with a label becomes a Markdown link and renders as the label alone
 });
 
 test("a link that shows its own address is left to the text conversion", () => {
-  const { html, linked } = liftProtected(
+  const { html, rewritten } = liftProtected(
     '<p><a href="https://a.example/">https://a.example/</a> <a href="mailto:a@b.c">a@b.c</a></p>',
     env
   );
-  assert.equal(linked, false);
+  assert.equal(rewritten, false);
   assert.match(html, /<a href="https:\/\/a\.example\/">/);
 });
 
 test("link destinations with spaces or parentheses are escaped", () => {
   const { html } = liftProtected('<p><a href="https://a.example/x (1)">page</a></p>', env);
   assert.match(html, /\[page\]\(https:\/\/a\.example\/x%20%281%29\)/);
+});
+
+/** Body text as liftProtected leaves it, with the paragraph tags dropped. */
+const liftedText = (body) => liftProtected(body, env).html.replace(/<\/?p>/g, "").replace(/&nbsp;/g, " ");
+
+test("Thunderbird's bold and italic become Markdown and render as bold and italic", () => {
+  const { html, rewritten } = liftProtected("<p>some <b>loud</b> and <i>soft</i> <strong>x</strong><em>y</em></p>", env);
+  assert.equal(rewritten, true);
+  assert.equal(html, "<p>some **loud** and *soft* **x***y*</p>");
+  const out = createRenderer()(html.replace(/<\/?p>/g, ""));
+  assert.match(out, /<strong>loud<\/strong> and <em>soft<\/em> <strong>x<\/strong><em>y<\/em>/);
+});
+
+test("whitespace at the edges of bold or italic moves outside the markers", () => {
+  assert.equal(liftedText("<p>a<b> loud&nbsp;</b>b <i>  </i>c</p>"), "a **loud** b   c");
+});
+
+test("nested formatting, bold links and underline", () => {
+  assert.equal(liftedText("<p><b>all <i>of</i> it</b> <b><b>twice</b></b></p>"), "**all *of* it** **twice**");
+  assert.equal(liftedText('<p><a href="https://a.example/"><b>site</b></a></p>'), "[**site**](https://a.example/)");
+  assert.equal(liftedText("<p>an <u>underlined</u> word</p>"), "an underlined word");
+});
+
+test("bold over several lines keeps its text but not the formatting", () => {
+  assert.equal(liftedText("<p><b>one<br>two</b></p>"), "one<br>two");
+});
+
+test("formatting inside a quote or signature is left alone", () => {
+  const { html, blocks } = liftProtected(`<p>mine</p>${QUOTE}`, env);
+  assert.doesNotMatch(html, /\*\*/);
+  assert.match(blocks[0], /<b>plan<\/b>/);
 });

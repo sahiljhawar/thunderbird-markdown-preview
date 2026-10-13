@@ -79,7 +79,7 @@ Both toggles are remembered for new messages. Options (Add-ons and Themes, then 
 **Options**): the two defaults, single line breaks as line breaks (GitHub comment style, on by
 default), preview delay and pane width.
 
-### Inline code and link shortcuts
+### Markdown shortcuts
 
 While Markdown is on, select some text and press **`** (backtick) or **Ctrl+E** (**Cmd+E** on
 macOS) to wrap it in backticks. The text stays selected, so pressing **Ctrl+E** again removes
@@ -87,6 +87,17 @@ them. With nothing selected, **Ctrl+E** inserts a pair of backticks with the cur
 them, and **`** types a backtick as usual. Text that itself contains backticks gets a longer
 fence (``` ``a`b`` ```), so it still renders as one code span. Selections spanning several
 lines are left alone.
+
+**Ctrl+B** and **Ctrl+I** (**Cmd** on macOS) work the same way for `**bold**` and `*italic*`:
+they wrap the selection, keep it selected, and remove the markers when pressed again. The two
+combine (`***both***`). With nothing selected they insert a pair of markers with the cursor
+between them. While Markdown is on they write Markdown instead of Thunderbird's own HTML bold
+and italic. On text that already has HTML bold (or italic), they remove it as Thunderbird
+normally does. With Markdown off they do the HTML formatting as usual.
+
+HTML formatting in your text still works with Markdown on: bold and italic made with the
+toolbar, with Markdown off, or pasted from elsewhere are rendered as bold and italic.
+Markdown has no underline, so underlined text is sent as plain text.
 
 To make a link, select some text and paste a URL over it: the text becomes
 `[text](https://...)`. This works for `http`, `https`, `ftp` and `mailto:` addresses. Pasting

@@ -70,8 +70,8 @@ async function applyState(windowId) {
  */
 async function renderCompose(details, { finish = (html) => html, forPreview = false } = {}) {
   if (!details.isPlainText && details.body) {
-    const { html, blocks, images, linked } = liftProtected(details.body);
-    if (blocks.length || images.length || linked) {
+    const { html, blocks, images, rewritten } = liftProtected(details.body);
+    if (blocks.length || images.length || rewritten) {
       try {
         const text = await browser.mdpane.htmlToText(html);
         const shown = forPreview ? blocks.map((block) => neutralizeForPreview(block)) : blocks;

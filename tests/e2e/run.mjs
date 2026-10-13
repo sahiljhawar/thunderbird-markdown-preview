@@ -514,6 +514,47 @@ try {
   await pasteText("https://example.com/");
   assert.match(await editorText(), / https:\/\/example\.com\/ words$/, "with Markdown off a URL pastes as usual");
   await ensureState({ render: true });
+
+  step("Ctrl+B and Ctrl+I toggle Markdown bold and italic");
+  const editorHtml = () => m.run(WIN + `return win.document.getElementById("messageEditor").contentDocument.body.innerHTML;`);
+  await typeText("make this loud and that soft");
+  await selectText("loud");
+  await pressKey("b", { ctrl: true });
+  assert.equal(await editorText(), "make this **loud** and that soft", "Ctrl+B wraps the selection in **");
+  assert.equal(await selectedText(), "loud", "the text stays selected");
+  assert.doesNotMatch(await editorHtml(), /<b>|<strong>/, "no HTML bold in the editor");
+  await pressKey("i", { ctrl: true });
+  assert.equal(await editorText(), "make this ***loud*** and that soft", "Ctrl+I adds italic to bold");
+  await waitFor("bold italic in preview", WIN + `return /<em><strong>loud<\\/strong><\\/em>/.test(win.document.getElementById("mdp-frame").contentDocument.body.innerHTML);`);
+  await pressKey("b", { ctrl: true });
+  assert.equal(await editorText(), "make this *loud* and that soft", "Ctrl+B removes bold, italic stays");
+  await pressKey("i", { ctrl: true });
+  assert.equal(await editorText(), "make this loud and that soft", "Ctrl+I removes italic");
+  await selectText("soft");
+  await pressKey("i", { ctrl: true });
+  await selectText("*soft*");
+  await pressKey("i", { ctrl: true });
+  assert.equal(await editorText(), "make this loud and that soft", "Ctrl+I unwraps a selection that includes the markers");
+  await m.run(WIN + `win.GetCurrentEditor().endOfDocument(); return true;`);
+  await pressKey("b", { ctrl: true });
+  await pressKey("x");
+  assert.equal(await editorText(), "make this loud and that soft**x**", "with nothing selected the caret goes between the markers");
+
+  step("Thunderbird's own bold and italic render as bold and italic");
+  await typeText("some loud and soft words");
+  await ensureState({ render: false });
+  await selectText("loud");
+  await pressKey("b", { ctrl: true });
+  await selectText("soft");
+  await pressKey("i", { ctrl: true });
+  assert.equal(await editorText(), "some loud and soft words", "with Markdown off no markers are added");
+  assert.match(await editorHtml(), /<b>loud<\/b> and <i>soft<\/i>/, "with Markdown off Ctrl+B and Ctrl+I are Thunderbird's HTML formatting");
+  await ensureState({ render: true });
+  await waitFor("HTML formatting rendered", WIN + `return /<strong>loud<\\/strong> and <em>soft<\\/em>/.test(win.document.getElementById("mdp-frame").contentDocument.body.innerHTML);`, { timeout: 5000 });
+  await selectText("loud");
+  await pressKey("b", { ctrl: true });
+  assert.equal(await editorText(), "some loud and soft words", "Ctrl+B on HTML bold adds no markers");
+  assert.doesNotMatch(await editorHtml(), /<b>/, "Ctrl+B on HTML bold removes it, as Thunderbird does");
   await m.run(WIN + `win.gContentChanged = false; win.close(); return true;`);
 
   // ---- 3. Plain-text compose: warn and refuse to send raw markdown ---------------------

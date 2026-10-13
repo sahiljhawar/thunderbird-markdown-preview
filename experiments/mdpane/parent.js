@@ -241,6 +241,71 @@ function codeSpanContent(text) {
   return inner.startsWith("`") || inner.endsWith("`") ? null : inner;
 }
 
+// Ctrl+B and Ctrl+I write Markdown instead of Thunderbird's HTML bold and italic.
+const EMPHASIS = { b: { marker: "**", html: "b, strong" }, i: { marker: "*", html: "i, em" } };
+
+/** Whether the selection is in, or contains, an element matching `selector`. */
+function selectionHas(selection, selector) {
+  const range = selection.getRangeAt(0);
+  const node = range.commonAncestorContainer;
+  const element = node.nodeType === node.ELEMENT_NODE ? node : node.parentElement;
+  return Boolean(element?.closest(selector) || range.cloneContents().querySelector(selector));
+}
+
+/**
+ * Ctrl+B / Ctrl+I: toggles **bold** or *italic* on the selection, which stays selected.
+ * A run of n asterisks around the text means bold when n >= 2 and italic when n is odd,
+ * so the two combine (***both***). With nothing selected, a pair of markers is inserted
+ * with the caret between them. Text that already has Thunderbird's HTML bold (or italic) is
+ * left to Thunderbird, which toggles that formatting off.
+ */
+function toggleEmphasis(state, event, { marker, html }) {
+  const editor = state.win.GetCurrentEditor?.();
+  const selection = state.boundDoc?.getSelection();
+  if (!editor || selection?.rangeCount !== 1 || selectionHas(selection, html)) return;
+
+  if (selection.isCollapsed) {
+    event.preventDefault();
+    editor.insertText(marker + marker);
+    selectBeforeCaret(selection, marker.length, 0);
+    return;
+  }
+
+  const text = wrappableText(selection);
+  if (text === null) return;
+  event.preventDefault();
+  const applied = (run) => (marker === "**" ? run >= 2 : run % 2 === 1);
+
+  // Markers just outside the selection (as left selected after wrapping): remove them.
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+  if (node === range.endContainer && node.nodeType === node.TEXT_NODE) {
+    const run = Math.min(
+      node.data.slice(0, range.startOffset).match(/\**$/)[0].length,
+      node.data.slice(range.endOffset).match(/^\**/)[0].length
+    );
+    if (applied(run)) {
+      range.setStart(node, range.startOffset - marker.length);
+      range.setEnd(node, range.endOffset + marker.length);
+      editor.insertText(text);
+      selectBeforeCaret(selection, 0, text.length);
+      return;
+    }
+  }
+
+  // Markers inside the selection: remove them. Otherwise wrap, whitespace staying outside.
+  const [, lead, core, trail] = text.match(EDGE_SPACE);
+  const run = Math.min(core.match(/^\**/)[0].length, core.match(/\**$/)[0].length);
+  if (applied(run) && core.length > 2 * marker.length) {
+    const inner = core.slice(marker.length, -marker.length);
+    editor.insertText(`${lead}${inner}${trail}`);
+    selectBeforeCaret(selection, trail.length, inner.length);
+    return;
+  }
+  editor.insertText(`${lead}${marker}${core}${marker}${trail}`);
+  selectBeforeCaret(selection, marker.length + trail.length, core.length);
+}
+
 /**
  * Inline code shortcuts while Markdown is on: with text selected, "`" wraps it in
  * backticks and Ctrl+E (Cmd+E) toggles it. With nothing selected, Ctrl+E inserts a
@@ -249,8 +314,13 @@ function codeSpanContent(text) {
  */
 function onEditorKeyDown(state, event) {
   if (!state.renderOn || event.defaultPrevented || event.isComposing) return;
-  const shortcut =
-    (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "e";
+  const accel = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+  const letter = accel ? event.key.toLowerCase() : "";
+  if (EMPHASIS[letter]) {
+    toggleEmphasis(state, event, EMPHASIS[letter]);
+    return;
+  }
+  const shortcut = letter === "e";
   if (!shortcut && event.key !== "`") return;
 
   const editor = state.win.GetCurrentEditor?.();
