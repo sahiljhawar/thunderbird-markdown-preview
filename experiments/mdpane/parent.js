@@ -169,6 +169,7 @@ function bindEditor(state) {
       state.boundDoc.removeEventListener("input", state.onInput, true);
       state.boundDoc.removeEventListener("scroll", state.onScroll, true);
       state.boundDoc.removeEventListener("keydown", state.onKeyDown, true);
+      state.boundDoc.removeEventListener("paste", state.onPaste, true);
     } catch {
       // The old document is already gone.
     }
@@ -176,6 +177,7 @@ function bindEditor(state) {
   editorDoc.addEventListener("input", state.onInput, true);
   editorDoc.addEventListener("scroll", state.onScroll, true);
   editorDoc.addEventListener("keydown", state.onKeyDown, true);
+  editorDoc.addEventListener("paste", state.onPaste, true);
   state.boundDoc = editorDoc;
   // Before the editor has settled nothing reads it: the first preview is
   // requested once it has (see buildPane).
@@ -193,6 +195,20 @@ function syncScroll(state) {
   } catch {
     // Scroll sync is a nicety.
   }
+}
+
+// Splits a selection into leading whitespace, the text proper and trailing whitespace.
+const EDGE_SPACE = /^(\s*)([\s\S]*?)(\s*)$/;
+const PASTED_URL = /^(?:(?:https?|ftp):\/\/|mailto:)\S+$/i;
+
+/** The selected text if inline Markdown can wrap it (some text on one line, no image), else null. */
+function wrappableText(selection) {
+  if (selection.rangeCount !== 1 || selection.isCollapsed) return null;
+  const text = selection.toString();
+  if (!text.trim() || /[\r\n]/.test(text) || selection.getRangeAt(0).cloneContents().querySelector("img")) {
+    return null;
+  }
+  return text;
 }
 
 /** After an insert, selects `length` characters ending `skip` characters before the caret. */
@@ -250,8 +266,8 @@ function onEditorKeyDown(state, event) {
   }
 
   const range = selection.getRangeAt(0);
-  const text = selection.toString();
-  if (!text.trim() || /[\r\n]/.test(text) || range.cloneContents().querySelector("img")) return;
+  const text = wrappableText(selection);
+  if (text === null) return;
   event.preventDefault();
 
   if (shortcut) {
@@ -275,11 +291,40 @@ function onEditorKeyDown(state, event) {
   // Whitespace at the edges (a double-click on Windows takes the trailing space) stays
   // outside the span. The fence is longer than any run of backticks in the text, and is
   // padded with a space when the text starts or ends with one (CommonMark code spans).
-  const [, lead, core, trail] = text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  const [, lead, core, trail] = text.match(EDGE_SPACE);
   const fence = "`".repeat(Math.max(0, ...(core.match(/`+/g) ?? []).map((run) => run.length)) + 1);
   const pad = core.startsWith("`") || core.endsWith("`") ? " " : "";
   editor.insertText(`${lead}${fence}${pad}${core}${pad}${fence}${trail}`);
   selectBeforeCaret(selection, pad.length + fence.length + trail.length, core.length);
+}
+
+/** A Markdown link destination for `url`: bare, or in <> when its parentheses do not balance. */
+function linkDestination(url) {
+  let depth = 0;
+  for (const c of url) {
+    if (c === "(") depth++;
+    else if (c === ")" && --depth < 0) break;
+  }
+  return depth === 0 && !/[<>]/.test(url) ? url : `<${url.replace(/[<>]/g, encodeURIComponent)}>`;
+}
+
+/**
+ * Pasting a URL over selected text while Markdown is on links the text to it, written as
+ * [text](url). Anything else, or a URL pasted over a selected URL, pastes as usual.
+ */
+function onEditorPaste(state, event) {
+  if (!state.renderOn || event.defaultPrevented) return;
+  const url = event.clipboardData?.getData("text/plain").trim();
+  if (!url || !PASTED_URL.test(url)) return;
+
+  const editor = state.win.GetCurrentEditor?.();
+  const selection = state.boundDoc?.getSelection();
+  const text = selection && wrappableText(selection);
+  if (!editor || text === null || PASTED_URL.test(text.trim())) return;
+  event.preventDefault();
+
+  const [, lead, core, trail] = text.match(EDGE_SPACE);
+  editor.insertText(`${lead}[${core.replace(/[[\]]/g, "\\$&")}](${linkDestination(url)})${trail}`);
 }
 
 /**
@@ -442,6 +487,7 @@ function buildPane(win, windowId, { css, width, render, preview }, iconUrl) {
     onInput: () => emit(inputListeners, windowId),
     onScroll: () => syncScroll(state),
     onKeyDown: (event) => onEditorKeyDown(state, event),
+    onPaste: (event) => onEditorPaste(state, event),
     cleanup: [],
   };
 
@@ -516,6 +562,7 @@ function detach(windowId) {
       state.boundDoc.removeEventListener("input", state.onInput, true);
       state.boundDoc.removeEventListener("scroll", state.onScroll, true);
       state.boundDoc.removeEventListener("keydown", state.onKeyDown, true);
+      state.boundDoc.removeEventListener("paste", state.onPaste, true);
     }
     for (const fn of state.cleanup) fn();
     removeAll(state.win);

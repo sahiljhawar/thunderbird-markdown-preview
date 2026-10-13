@@ -101,6 +101,16 @@ const pressKey = (key, { ctrl = false } = {}) =>
     [key, ctrl]
   );
 
+/** Puts `text` on the clipboard and pastes it into the editor with Thunderbird's own Paste command. */
+const pasteText = (text) =>
+  m.run(
+    WIN + `Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper).copyString(arguments[0]);
+      win.document.getElementById("messageEditor").contentWindow.focus();
+      win.goDoCommand("cmd_paste");
+      return true;`,
+    [text]
+  );
+
 const previewHtml = () =>
   m.run(WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML;`);
 
@@ -482,6 +492,27 @@ try {
   await selectText("now");
   await pressKey("`");
   assert.equal(await editorText(), "call `foo` ` and ``a`b`` too`", "with Markdown off a backtick replaces the selection");
+  await ensureState({ render: true });
+
+  step("pasting a URL over selected text links the text to it");
+  await typeText("see the docs and [notes] here");
+  await selectText("docs");
+  await pasteText("https://example.com/a_(b)");
+  assert.equal(await editorText(), "see the [docs](https://example.com/a_(b)) and [notes] here", "the selection becomes a link");
+  await waitFor("link in preview", WIN + `return win.document.getElementById("mdp-frame").contentDocument.body.innerHTML.includes('<a href="https://example.com/a_(b)">docs</a>');`);
+  await selectText("[notes]");
+  await pasteText(" https://example.com/x)y\n");
+  assert.equal(await editorText(), "see the [docs](https://example.com/a_(b)) and [\\[notes\\]](<https://example.com/x)y>) here", "brackets and an unbalanced ) are escaped");
+  await selectText("here");
+  await pasteText("plain words");
+  assert.match(await editorText(), / plain words$/, "pasting text that is not a URL replaces the selection");
+  await selectText("https://example.com/a_(b)");
+  await pasteText("https://example.org/");
+  assert.match(await editorText(), /^see the \[docs\]\(https:\/\/example\.org\/\)/, "a URL pasted over a URL replaces it");
+  await ensureState({ render: false });
+  await selectText("plain");
+  await pasteText("https://example.com/");
+  assert.match(await editorText(), / https:\/\/example\.com\/ words$/, "with Markdown off a URL pastes as usual");
   await ensureState({ render: true });
   await m.run(WIN + `win.gContentChanged = false; win.close(); return true;`);
 

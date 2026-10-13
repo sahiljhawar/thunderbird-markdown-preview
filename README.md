@@ -79,7 +79,7 @@ Both toggles are remembered for new messages. Options (Add-ons and Themes, then 
 **Options**): the two defaults, single line breaks as line breaks (GitHub comment style, on by
 default), preview delay and pane width.
 
-### Inline code shortcut
+### Inline code and link shortcuts
 
 While Markdown is on, select some text and press **`** (backtick) or **Ctrl+E** (**Cmd+E** on
 macOS) to wrap it in backticks. The text stays selected, so pressing **Ctrl+E** again removes
@@ -87,6 +87,10 @@ them. With nothing selected, **Ctrl+E** inserts a pair of backticks with the cur
 them, and **`** types a backtick as usual. Text that itself contains backticks gets a longer
 fence (``` ``a`b`` ```), so it still renders as one code span. Selections spanning several
 lines are left alone.
+
+To make a link, select some text and paste a URL over it: the text becomes
+`[text](https://...)`. This works for `http`, `https`, `ftp` and `mailto:` addresses. Pasting
+anything else, or pasting a URL over a selected URL, works as usual.
 
 ### Things to know
 
